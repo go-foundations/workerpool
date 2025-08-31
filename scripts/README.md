@@ -1,47 +1,22 @@
-# 🚀 Auto-Create GitHub Issues Scripts
+# 🚀 Auto-Create GitHub Issues from Markdown
 
-This directory contains scripts to automatically create GitHub issues from the documentation files for the Resource-Aware Scheduling implementation.
+This directory contains the essential script to automatically create GitHub issues from markdown documentation files.
 
-## 📋 Available Scripts
+## 📋 Available Script
 
-### **Python Script (Recommended)**
-- **File**: `create_issues.py`
-- **Dependencies**: PyGithub
-- **Features**: Creates milestones and issues with proper formatting
-
-### **Shell Script**
-- **File**: `create_issues.sh`
+### **Main Script**
+- **File**: `create_github_issues.py`
 - **Dependencies**: GitHub CLI (`gh`)
-- **Features**: Creates milestones and issues with proper formatting
-
-**Note**: The `create_all_issues.sh` script was used to create the initial set of issues and has been removed since it's no longer needed.
+- **Features**: 
+  - Reads `.github/ISSUES_PHASE*.md` files
+  - Parses issue content, labels, and milestones
+  - Creates GitHub issues automatically
+  - Skips already existing issues
+  - Handles milestone mapping automatically
 
 ## 🛠️ Setup Instructions
 
-### **Option 1: Python Script (Recommended)**
-
-1. **Install Python dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Set GitHub token:**
-   ```bash
-   export GITHUB_TOKEN=your_github_personal_access_token
-   ```
-   
-   **To get a token:**
-   - Go to GitHub Settings → Developer settings → Personal access tokens
-   - Generate new token with `repo` scope
-   - Copy the token and set it as environment variable
-
-3. **Run the script:**
-   ```bash
-   cd scripts
-   python create_issues.py
-   ```
-
-### **Option 2: GitHub CLI Script**
+### **Prerequisites**
 
 1. **Install GitHub CLI:**
    ```bash
@@ -60,107 +35,106 @@ This directory contains scripts to automatically create GitHub issues from the d
    gh auth login
    ```
 
-3. **Run the script:**
-   ```bash
-   cd scripts
-   chmod +x create_issues.sh
-   ./create_issues.sh
-   ```
+3. **Ensure you have the required labels and milestones** (the script will create them if missing)
+
+### **Usage**
+
+```bash
+# Run the script to create issues from markdown files
+python scripts/create_github_issues.py
+```
 
 ## 📊 What Gets Created
 
-### **Milestones (7 total)**
-- Phase 1: Foundation
-- Phase 2: Basic Resource-Aware Scheduling
-- Phase 3: Learning and Profiling
-- Phase 4: Advanced Scheduling Algorithms
-- Phase 5: Observability and Monitoring
-- Phase 6: Cloud Integration
-- Phase 7: Testing and Documentation
+### **From Markdown Files:**
+- **Issue titles** and descriptions
+- **Labels** for categorization
+- **Milestone assignments**
+- **Full issue content** with requirements, acceptance criteria, and implementation notes
 
-### **Issues (6 created, 23 remaining)**
-- **Phase 1**: 3 issues ✅ (Foundation)
-- **Phase 2**: 3 issues ✅ (Basic Scheduling)
-- **Phase 3**: 3 issues (Learning) - Ready for creation
-- **Phase 4**: 3 issues (Advanced Algorithms) - Ready for creation
-- **Phase 5**: 3 issues (Observability) - Ready for creation
-- **Phase 6**: 3 issues (Cloud Integration) - Ready for creation
-- **Phase 7**: 2 issues (Testing & Docs) - Ready for creation
+### **Current Status:**
+- **20 issues created** across all 7 phases
+- **7 milestones** with proper descriptions
+- **40+ custom labels** for comprehensive categorization
+
+## 🔧 How It Works
+
+1. **Scans `.github/` directory** for `ISSUES_PHASE*.md` files
+2. **Parses each file** to extract issue information
+3. **Maps milestone names** to actual GitHub milestone names
+4. **Creates issues** using GitHub CLI
+5. **Skips existing issues** to avoid duplicates
+
+## 📁 File Structure
+
+```
+.github/
+├── ISSUES_PHASE1.md    # Phase 1 issues (Foundation)
+├── ISSUES_PHASE2.md    # Phase 2 issues (Basic Scheduling)
+├── ISSUES_PHASE3.md    # Phase 3 issues (Learning & Profiling)
+├── ISSUES_PHASE4.md    # Phase 4 issues (Advanced Algorithms)
+├── ISSUES_PHASE5.md    # Phase 5 issues (Observability)
+├── ISSUES_PHASE6.md    # Phase 6 issues (Cloud Integration)
+└── ISSUES_PHASE7.md    # Phase 7 issues (Testing & Docs)
+
+scripts/
+├── create_github_issues.py    # Main script
+├── requirements.txt            # Python dependencies
+└── README.md                  # This file
+```
 
 ## 🏷️ Issue Labels
 
-Each issue gets automatically labeled with:
-- **Phase labels**: `phase1`, `phase2`, etc.
-- **Feature labels**: `foundation`, `scheduling`, `resources`, etc.
-- **Type labels**: `enhancement`
-- **Priority labels**: Based on phase importance
-
-## 🔧 Customization
-
-### **Modify Repository**
-Edit the `REPO_NAME` variable in the script:
-```python
-REPO_NAME = "your-username/your-repo"
-```
-
-### **Add More Issues**
-The Python script can be extended to create the remaining 23 issues for Phases 3-7. Currently 6 issues are created (Phases 1-2).
-
-### **Modify Issue Content**
-Edit the issue body text in the script to customize descriptions, requirements, and acceptance criteria.
+The script automatically creates and applies labels including:
+- **Phase labels**: `phase1`, `phase2`, `phase3`, etc.
+- **Feature labels**: `foundation`, `scheduling`, `resources`, `learning`, etc.
+- **Type labels**: `enhancement`, `bug`, `documentation`
+- **Technical labels**: `algorithms`, `observability`, `cloud`, etc.
 
 ## 🚨 Troubleshooting
 
 ### **Common Issues**
 
-1. **"GITHUB_TOKEN not set"**
-   - Ensure you've set the environment variable
-   - Check token has `repo` scope
+1. **"GitHub CLI not found"**
+   - Install GitHub CLI first
+   - Ensure `gh` is in your PATH
 
-2. **"Repository not found"**
-   - Verify repository name is correct
-   - Ensure token has access to the repository
+2. **"Not authenticated"**
+   - Run `gh auth login` to authenticate
 
-3. **"Milestone already exists"**
-   - Script will reuse existing milestones
-   - No duplicate milestones will be created
+3. **"Label not found"**
+   - The script will create missing labels automatically
+   - Check if you have permission to create labels
 
-4. **"Rate limit exceeded"**
-   - GitHub has rate limits for API calls
-   - Wait a few minutes and try again
+4. **"Milestone not found"**
+   - Ensure milestones exist in the repository
+   - Check milestone names match exactly
 
 ### **Debug Mode**
 
-Add debug logging to the Python script:
+Add debug logging to the script:
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-## 📈 Current Status & Next Steps
+## 📈 Next Steps
 
-### **✅ What's Already Done:**
-- **6 issues created** for Phases 1-2 (Foundation & Basic Scheduling)
-- **7 milestones created** for all phases
-- **12 custom labels** for proper categorization
-- **Repository ready** for community development
-
-### **🔄 Next Steps:**
+After running the script:
 
 1. **Review created issues** on GitHub
 2. **Assign issues** to team members
 3. **Set priorities** and due dates
 4. **Begin implementation** starting with Phase 1
-5. **Create remaining issues** for Phases 3-7 when ready
-6. **Update progress** as issues are completed
+5. **Update markdown files** and re-run script for new issues
 
 ## 🔗 Useful Links
 
-- [GitHub Issues API](https://docs.github.com/en/rest/issues)
-- [PyGithub Documentation](https://pygithub.readthedocs.io/)
 - [GitHub CLI Documentation](https://cli.github.com/)
-- [Personal Access Tokens](https://github.com/settings/tokens)
+- [GitHub Issues API](https://docs.github.com/en/rest/issues)
+- [Repository Issues](https://github.com/go-foundations/workerpool/issues)
+- [Repository Milestones](https://github.com/go-foundations/workerpool/milestones)
 
 ---
 
-**Note**: These scripts create a comprehensive set of issues for the Resource-Aware Scheduling implementation. Each issue includes detailed requirements, acceptance criteria, and implementation notes to guide development.
+**Note**: This script provides a clean, maintainable way to convert markdown documentation into actionable GitHub issues. All issue content is stored in markdown files, making it easy to update and version control.

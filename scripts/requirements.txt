@@ -1,1 +1,3 @@
-PyGithub>=1.59.0
+# No external dependencies required
+# This script uses GitHub CLI (gh) for all GitHub operations
+# Install GitHub CLI: https://cli.github.com/
