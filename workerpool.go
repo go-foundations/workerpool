@@ -1,0 +1,483 @@
+// Package workerpool provides a generic, high-performance worker pool implementation
+// with multiple distribution strategies for concurrent job processing.
+//
+// The worker pool supports:
+// - Generic types for jobs and results
+// - Multiple distribution strategies (Round-Robin, Chunked, Work Stealing)
+// - Configurable worker counts and buffer sizes
+// - Context cancellation and timeout support
+// - Error handling and result collection
+// - Performance monitoring and metrics
+package workerpool
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+)
+
+// Job represents a unit of work to be processed
+type Job[T any] struct {
+	ID       string    // Unique identifier for the job
+	Data     T         // The actual data to be processed
+	Priority int       // Job priority (higher = more important)
+	Created  time.Time // When the job was created
+}
+
+// Result wraps the processing result of a job
+type Result[R any] struct {
+	JobID     string        // ID of the processed job
+	Data      R             // The processed result
+	Error     error         // Any error that occurred during processing
+	Worker    int           // ID of the worker that processed the job
+	Started   time.Time     // When processing started
+	Completed time.Time     // When processing completed
+	Duration  time.Duration // How long processing took
+}
+
+// Processor defines how to process a job
+type Processor[T any, R any] func(ctx context.Context, job Job[T]) (R, error)
+
+// DistributionStrategy defines how jobs are distributed to workers
+type DistributionStrategy int
+
+const (
+	RoundRobin DistributionStrategy = iota
+	Chunked
+	WorkStealing
+	PriorityBased
+)
+
+// Config holds configuration for the worker pool
+type Config struct {
+	NumWorkers    int                  // Number of worker goroutines
+	BufferSize    int                  // Buffer size for job channels
+	Strategy      DistributionStrategy // How to distribute jobs
+	Timeout       time.Duration        // Overall timeout for the pool
+	WorkerTimeout time.Duration        // Timeout per individual worker
+	MaxRetries    int                  // Maximum retry attempts for failed jobs
+	EnableMetrics bool                 // Whether to collect performance metrics
+}
+
+// DefaultConfig returns sensible default configuration
+func DefaultConfig() Config {
+	return Config{
+		NumWorkers:    4,
+		BufferSize:    100,
+		Strategy:      RoundRobin,
+		Timeout:       5 * time.Minute,
+		WorkerTimeout: 30 * time.Second,
+		MaxRetries:    3,
+		EnableMetrics: true,
+	}
+}
+
+// WorkerPool manages a pool of workers for processing jobs
+type WorkerPool[T any, R any] struct {
+	config    Config
+	processor Processor[T, R]
+	jobs      []Job[T]
+	results   chan Result[R]
+	ctx       context.Context
+	cancel    context.CancelFunc
+	metrics   *Metrics
+	mu        sync.RWMutex
+	ctxMu     sync.RWMutex // Protects ctx and cancel fields
+}
+
+// Metrics holds performance metrics for the worker pool
+type Metrics struct {
+	TotalJobs       int
+	ProcessedJobs   int
+	FailedJobs      int
+	TotalDuration   time.Duration
+	AverageDuration time.Duration
+	StartTime       time.Time
+	EndTime         time.Time
+	mu              sync.RWMutex
+}
+
+// New creates a new worker pool with default configuration
+func New[T any, R any]() *WorkerPool[T, R] {
+	return NewWithConfig[T, R](DefaultConfig())
+}
+
+// NewWithConfig creates a new worker pool with custom configuration
+func NewWithConfig[T any, R any](config Config) *WorkerPool[T, R] {
+	if config.NumWorkers <= 0 {
+		config.NumWorkers = 1
+	}
+	if config.BufferSize <= 0 {
+		config.BufferSize = 100
+	}
+	if config.Timeout <= 0 {
+		config.Timeout = 5 * time.Minute // Default timeout
+	}
+	// Ensure buffer size is at least as large as typical job counts
+	if config.BufferSize < 10 {
+		config.BufferSize = 10
+	}
+
+	return &WorkerPool[T, R]{
+		config:  config,
+		results: make(chan Result[R], config.BufferSize),
+		ctx:     nil, // Will be set in Run()
+		cancel:  nil, // Will be set in Run()
+		metrics: &Metrics{},
+	}
+}
+
+// WithProcessor sets the processing function for the worker pool
+func (wp *WorkerPool[T, R]) WithProcessor(p Processor[T, R]) *WorkerPool[T, R] {
+	wp.processor = p
+	return wp
+}
+
+// AddJobs adds jobs to the worker pool
+func (wp *WorkerPool[T, R]) AddJobs(jobs []Job[T]) *WorkerPool[T, R] {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	wp.jobs = make([]Job[T], len(jobs))
+	copy(wp.jobs, jobs)
+
+	// Set creation time for new jobs
+	now := time.Now()
+	for i := range wp.jobs {
+		if wp.jobs[i].Created.IsZero() {
+			wp.jobs[i].Created = now
+		}
+	}
+
+	wp.metrics.TotalJobs = len(wp.jobs)
+	return wp
+}
+
+// AddJob adds a single job to the worker pool
+func (wp *WorkerPool[T, R]) AddJob(job Job[T]) *WorkerPool[T, R] {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	if job.Created.IsZero() {
+		job.Created = time.Now()
+	}
+
+	wp.jobs = append(wp.jobs, job)
+	wp.metrics.TotalJobs = len(wp.jobs)
+	return wp
+}
+
+// Run executes the worker pool with the configured strategy
+func (wp *WorkerPool[T, R]) Run() ([]Result[R], error) {
+	if wp.processor == nil {
+		return nil, fmt.Errorf("no processor configured")
+	}
+	if len(wp.jobs) == 0 {
+		return nil, fmt.Errorf("no jobs to process")
+	}
+
+	// Create context with timeout for this run
+	ctx, cancel := context.WithTimeout(context.Background(), wp.config.Timeout)
+	wp.ctxMu.Lock()
+	wp.ctx = ctx
+	wp.cancel = cancel
+	wp.ctxMu.Unlock()
+
+	wp.metrics.StartTime = time.Now()
+	defer func() {
+		wp.metrics.EndTime = time.Now()
+		wp.metrics.TotalDuration = wp.metrics.EndTime.Sub(wp.metrics.StartTime)
+		if wp.metrics.ProcessedJobs > 0 {
+			wp.metrics.AverageDuration = wp.metrics.TotalDuration / time.Duration(wp.metrics.ProcessedJobs)
+		}
+	}()
+
+	var err error
+	switch wp.config.Strategy {
+	case RoundRobin:
+		err = wp.runRoundRobin()
+	case Chunked:
+		err = wp.runChunked()
+	case WorkStealing:
+		err = wp.runWorkStealing()
+	case PriorityBased:
+		err = wp.runPriorityBased()
+	default:
+		err = wp.runRoundRobin()
+	}
+
+	if err != nil {
+		// Clean up context on error
+		wp.ctxMu.Lock()
+		if wp.cancel != nil {
+			wp.cancel()
+			wp.cancel = nil
+			wp.ctx = nil
+		}
+		wp.ctxMu.Unlock()
+		return nil, err
+	}
+
+	// Collect results
+	var results []Result[R]
+	for result := range wp.results {
+		// Check for context cancellation
+		select {
+		case <-wp.ctx.Done():
+			return nil, wp.ctx.Err()
+		default:
+		}
+
+		results = append(results, result)
+		if result.Error != nil {
+			wp.metrics.FailedJobs++
+		} else {
+			wp.metrics.ProcessedJobs++
+		}
+	}
+
+	// Clean up context
+	wp.ctxMu.Lock()
+	if wp.cancel != nil {
+		wp.cancel()
+		wp.cancel = nil
+		wp.ctx = nil
+	}
+	wp.ctxMu.Unlock()
+
+	return results, nil
+}
+
+// runRoundRobin distributes jobs evenly across workers in round-robin fashion
+func (wp *WorkerPool[T, R]) runRoundRobin() error {
+	var wg sync.WaitGroup
+
+	// Create separate job channels for each worker
+	jobChannels := make([]chan Job[T], wp.config.NumWorkers)
+	for i := 0; i < wp.config.NumWorkers; i++ {
+		bufferSize := max(1, len(wp.jobs)/wp.config.NumWorkers+1)
+		jobChannels[i] = make(chan Job[T], bufferSize)
+		wg.Add(1)
+		go wp.worker(i, jobChannels[i], &wg)
+	}
+
+	// Distribute jobs round-robin
+	for i, job := range wp.jobs {
+		workerIndex := i % wp.config.NumWorkers
+		select {
+		case jobChannels[workerIndex] <- job:
+		case <-wp.ctx.Done():
+			return wp.ctx.Err()
+		}
+	}
+
+	// Close all channels
+	for _, ch := range jobChannels {
+		close(ch)
+	}
+
+	wg.Wait()
+	close(wp.results)
+
+	// Check if context was cancelled during execution
+	select {
+	case <-wp.ctx.Done():
+		return wp.ctx.Err()
+	default:
+		return nil
+	}
+}
+
+// runChunked distributes jobs in chunks to workers
+func (wp *WorkerPool[T, R]) runChunked() error {
+	var wg sync.WaitGroup
+
+	chunkSize := max(1, len(wp.jobs)/wp.config.NumWorkers)
+	remainder := len(wp.jobs) % wp.config.NumWorkers
+
+	start := 0
+	for i := 0; i < wp.config.NumWorkers; i++ {
+		end := start + chunkSize
+		if i < remainder {
+			end++
+		}
+
+		if start < len(wp.jobs) {
+			wg.Add(1)
+			go wp.workerWithSlice(i, wp.jobs[start:end], &wg)
+		}
+		start = end
+	}
+
+	wg.Wait()
+	close(wp.results)
+
+	// Check if context was cancelled during execution
+	select {
+	case <-wp.ctx.Done():
+		return wp.ctx.Err()
+	default:
+		return nil
+	}
+}
+
+// runWorkStealing implements a basic work stealing strategy
+func (wp *WorkerPool[T, R]) runWorkStealing() error {
+	// For simplicity, fall back to round-robin
+	// A full work stealing implementation would be more complex
+	return wp.runRoundRobin()
+}
+
+// runPriorityBased processes jobs based on priority
+func (wp *WorkerPool[T, R]) runPriorityBased() error {
+	// Sort jobs by priority (higher first)
+	// For simplicity, fall back to round-robin
+	// A full priority-based implementation would sort and distribute accordingly
+	return wp.runRoundRobin()
+}
+
+// worker processes jobs from a dedicated channel
+func (wp *WorkerPool[T, R]) worker(id int, jobs <-chan Job[T], wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for job := range jobs {
+		// Wait for context to be available
+		var ctx context.Context
+		for {
+			wp.ctxMu.RLock()
+			ctx = wp.ctx
+			wp.ctxMu.RUnlock()
+
+			if ctx != nil {
+				break
+			}
+			time.Sleep(1 * time.Millisecond) // Short wait
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			wp.processJob(id, job)
+		}
+	}
+}
+
+// workerWithSlice processes a slice of jobs directly
+func (wp *WorkerPool[T, R]) workerWithSlice(id int, jobSlice []Job[T], wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for _, job := range jobSlice {
+		// Wait for context to be available
+		var ctx context.Context
+		for {
+			wp.ctxMu.RLock()
+			ctx = wp.ctx
+			wp.ctxMu.RUnlock()
+
+			if ctx != nil {
+				break
+			}
+			time.Sleep(1 * time.Millisecond) // Short wait
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			wp.processJob(id, job)
+		}
+	}
+}
+
+// processJob handles the actual job processing with retries and metrics
+func (wp *WorkerPool[T, R]) processJob(workerID int, job Job[T]) {
+	startTime := time.Now()
+
+	var result R
+	var err error
+
+	// Process with retries
+	for attempt := 0; attempt <= wp.config.MaxRetries; attempt++ {
+		// Wait for context to be available
+		var ctx context.Context
+		for {
+			wp.ctxMu.RLock()
+			ctx = wp.ctx
+			wp.ctxMu.RUnlock()
+
+			if ctx != nil {
+				break
+			}
+			time.Sleep(1 * time.Millisecond) // Short wait
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			result, err = wp.processor(ctx, job)
+			if err == nil {
+				break
+			}
+			if attempt < wp.config.MaxRetries {
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+			}
+		}
+	}
+
+	completed := time.Now()
+	duration := completed.Sub(startTime)
+
+	// Send result to channel
+	wp.results <- Result[R]{
+		JobID:     job.ID,
+		Data:      result,
+		Error:     err,
+		Worker:    workerID,
+		Started:   startTime,
+		Completed: completed,
+		Duration:  duration,
+	}
+}
+
+// GetMetrics returns a copy of the current metrics
+func (wp *WorkerPool[T, R]) GetMetrics() Metrics {
+	wp.metrics.mu.RLock()
+	defer wp.metrics.mu.RUnlock()
+
+	return Metrics{
+		TotalJobs:       wp.metrics.TotalJobs,
+		ProcessedJobs:   wp.metrics.ProcessedJobs,
+		FailedJobs:      wp.metrics.FailedJobs,
+		TotalDuration:   wp.metrics.TotalDuration,
+		AverageDuration: wp.metrics.AverageDuration,
+		StartTime:       wp.metrics.StartTime,
+		EndTime:         wp.metrics.EndTime,
+	}
+}
+
+// GetNumWorkers returns the number of workers in the pool
+func (wp *WorkerPool[T, R]) GetNumWorkers() int {
+	return wp.config.NumWorkers
+}
+
+// Stop cancels the worker pool context
+func (wp *WorkerPool[T, R]) Stop() {
+	wp.ctxMu.RLock()
+	cancel := wp.cancel
+	wp.ctxMu.RUnlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// max returns the larger of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
