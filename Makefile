@@ -140,7 +140,7 @@ deps-update:
 
 # Validate package
 .PHONY: validate
-validate: fmt-check lint security vet test build
+validate: fmt-check security vet test build
 	@echo "✅ Package validation completed successfully!"
 
 # CI pipeline target

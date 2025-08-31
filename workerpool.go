@@ -329,7 +329,7 @@ func (wp *WorkerPool[T, R]) runWorkStealing() error {
 	// Create work stealing deques for each worker
 	deques := make([]*WorkStealingDeque[T], wp.config.NumWorkers)
 	for i := 0; i < wp.config.NumWorkers; i++ {
-		deques[i] = NewWorkStealingDeque[T](len(wp.jobs) / wp.config.NumWorkers + 1)
+		deques[i] = NewWorkStealingDeque[T](len(wp.jobs)/wp.config.NumWorkers + 1)
 	}
 
 	// Distribute jobs initially across worker deques (round-robin)
@@ -433,7 +433,7 @@ func (wp *WorkerPool[T, R]) runPriorityBased() error {
 
 	// Create priority queue and populate it with jobs
 	priorityQueue := NewPriorityQueue[T]()
-	
+
 	// Set creation time for fair scheduling and add jobs to priority queue
 	for _, job := range wp.jobs {
 		if job.Created.IsZero() {
@@ -444,7 +444,7 @@ func (wp *WorkerPool[T, R]) runPriorityBased() error {
 
 	// Create shared work queue for workers to consume from
 	workQueue := make(chan Job[T], wp.config.BufferSize)
-	
+
 	// Start workers
 	for i := 0; i < wp.config.NumWorkers; i++ {
 		wg.Add(1)
@@ -454,7 +454,7 @@ func (wp *WorkerPool[T, R]) runPriorityBased() error {
 	// Priority dispatcher: continuously feeds high-priority jobs to workers
 	go func() {
 		defer close(workQueue)
-		
+
 		for !priorityQueue.IsEmpty() {
 			job, ok := priorityQueue.Pop()
 			if !ok {
@@ -812,7 +812,7 @@ func (pq *PriorityQueue[T]) IsEmpty() bool {
 func (pq *PriorityQueue[T]) GetFairnessStats() map[int]int {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	
+
 	stats := make(map[int]int)
 	for k, v := range pq.fairness {
 		stats[k] = v
@@ -824,7 +824,7 @@ func (pq *PriorityQueue[T]) GetFairnessStats() map[int]int {
 func (pq *PriorityQueue[T]) bubbleUp(index int) {
 	for index > 0 {
 		parent := (index - 1) / 2
-		
+
 		// Check if we need to swap with parent
 		if pq.shouldSwap(parent, index) {
 			pq.items[parent], pq.items[index] = pq.items[index], pq.items[parent]
