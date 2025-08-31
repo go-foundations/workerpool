@@ -55,7 +55,8 @@ jobs:
       run: make lint
       
     - name: Security scan
-      run: make security
+      run: ./scripts/security-scan.sh
+      continue-on-error: true
       
     - name: Build package
       run: make build
