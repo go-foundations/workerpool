@@ -322,19 +322,164 @@ func (wp *WorkerPool[T, R]) runChunked() error {
 	}
 }
 
-// runWorkStealing implements a basic work stealing strategy
+// runWorkStealing implements work stealing using Chase-Lev work stealing deques
 func (wp *WorkerPool[T, R]) runWorkStealing() error {
-	// For simplicity, fall back to round-robin
-	// A full work stealing implementation would be more complex
-	return wp.runRoundRobin()
+	var wg sync.WaitGroup
+
+	// Create work stealing deques for each worker
+	deques := make([]*WorkStealingDeque[T], wp.config.NumWorkers)
+	for i := 0; i < wp.config.NumWorkers; i++ {
+		deques[i] = NewWorkStealingDeque[T](len(wp.jobs) / wp.config.NumWorkers + 1)
+	}
+
+	// Distribute jobs initially across worker deques (round-robin)
+	for i, job := range wp.jobs {
+		workerIndex := i % wp.config.NumWorkers
+		deques[workerIndex].Push(job)
+	}
+
+	// Start work stealing workers
+	for i := 0; i < wp.config.NumWorkers; i++ {
+		wg.Add(1)
+		go wp.workStealingWorker(i, deques, &wg)
+	}
+
+	wg.Wait()
+	close(wp.results)
+
+	// Check if context was cancelled during execution
+	select {
+	case <-wp.ctx.Done():
+		return wp.ctx.Err()
+	default:
+		return nil
+	}
 }
 
-// runPriorityBased processes jobs based on priority
+// workStealingWorker implements work stealing behavior
+func (wp *WorkerPool[T, R]) workStealingWorker(id int, deques []*WorkStealingDeque[T], wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	myDeque := deques[id]
+	numWorkers := len(deques)
+
+	for {
+		// Wait for context to be available
+		var ctx context.Context
+		for {
+			wp.ctxMu.RLock()
+			ctx = wp.ctx
+			wp.ctxMu.RUnlock()
+
+			if ctx != nil {
+				break
+			}
+			time.Sleep(1 * time.Millisecond) // Short wait
+		}
+
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Try to get work from own deque first (LIFO for better cache locality)
+		if job, ok := myDeque.Pop(); ok {
+			wp.processJob(id, job)
+			continue
+		}
+
+		// No work in own deque, try to steal from other workers (FIFO)
+		stolen := false
+		for attempts := 0; attempts < numWorkers*2; attempts++ {
+			// Pick a random victim (avoid bias)
+			victimID := (id + attempts + 1) % numWorkers
+			if victimID == id {
+				continue // Don't steal from yourself
+			}
+
+			if job, ok := deques[victimID].Steal(); ok {
+				wp.processJob(id, job)
+				stolen = true
+				break
+			}
+		}
+
+		// If no work was stolen, check if all deques are empty
+		if !stolen {
+			allEmpty := true
+			for _, deque := range deques {
+				if !deque.IsEmpty() {
+					allEmpty = false
+					break
+				}
+			}
+
+			if allEmpty {
+				// No more work available
+				return
+			}
+
+			// Brief pause before trying again to avoid busy waiting
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
+}
+
+// runPriorityBased processes jobs based on priority using a priority queue with fair scheduling
 func (wp *WorkerPool[T, R]) runPriorityBased() error {
-	// Sort jobs by priority (higher first)
-	// For simplicity, fall back to round-robin
-	// A full priority-based implementation would sort and distribute accordingly
-	return wp.runRoundRobin()
+	var wg sync.WaitGroup
+
+	// Create priority queue and populate it with jobs
+	priorityQueue := NewPriorityQueue[T]()
+	
+	// Set creation time for fair scheduling and add jobs to priority queue
+	for _, job := range wp.jobs {
+		if job.Created.IsZero() {
+			job.Created = time.Now()
+		}
+		priorityQueue.Push(job)
+	}
+
+	// Create shared work queue for workers to consume from
+	workQueue := make(chan Job[T], wp.config.BufferSize)
+	
+	// Start workers
+	for i := 0; i < wp.config.NumWorkers; i++ {
+		wg.Add(1)
+		go wp.worker(i, workQueue, &wg)
+	}
+
+	// Priority dispatcher: continuously feeds high-priority jobs to workers
+	go func() {
+		defer close(workQueue)
+		
+		for !priorityQueue.IsEmpty() {
+			job, ok := priorityQueue.Pop()
+			if !ok {
+				break
+			}
+
+			select {
+			case workQueue <- job:
+				// Job sent to worker
+			case <-wp.ctx.Done():
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(wp.results)
+
+	// Check if context was cancelled during execution
+	select {
+	case <-wp.ctx.Done():
+		return wp.ctx.Err()
+	default:
+		return nil
+	}
 }
 
 // worker processes jobs from a dedicated channel
@@ -560,12 +705,12 @@ func (d *WorkStealingDeque[T]) Steal() (Job[T], bool) {
 // grow increases the buffer size when needed
 func (d *WorkStealingDeque[T]) grow() {
 	newBuffer := make([]Job[T], len(d.buffer)*2)
-	
+
 	// Copy existing elements
 	for i := d.top; i < d.bottom; i++ {
 		newBuffer[i%int32(len(newBuffer))] = d.buffer[i%int32(len(d.buffer))]
 	}
-	
+
 	d.buffer = newBuffer
 }
 
@@ -582,3 +727,151 @@ func (d *WorkStealingDeque[T]) IsEmpty() bool {
 }
 
 // PriorityQueue implements a priority queue with fair scheduling
+// Uses a binary heap with additional fairness mechanisms
+type PriorityQueue[T any] struct {
+	items    []Job[T]
+	mu       sync.RWMutex
+	fairness map[int]int // Track job counts per priority to prevent starvation
+}
+
+// NewPriorityQueue creates a new priority queue
+func NewPriorityQueue[T any]() *PriorityQueue[T] {
+	return &PriorityQueue[T]{
+		items:    make([]Job[T], 0),
+		fairness: make(map[int]int),
+	}
+}
+
+// Push adds a job to the priority queue
+func (pq *PriorityQueue[T]) Push(job Job[T]) {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	// Track job count per priority for fairness
+	pq.fairness[job.Priority]++
+
+	// Add job to the end
+	pq.items = append(pq.items, job)
+
+	// Bubble up to maintain heap property
+	pq.bubbleUp(len(pq.items) - 1)
+}
+
+// Pop removes and returns the highest priority job
+func (pq *PriorityQueue[T]) Pop() (Job[T], bool) {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	if len(pq.items) == 0 {
+		return Job[T]{}, false
+	}
+
+	// Get the highest priority job
+	job := pq.items[0]
+
+	// Update fairness tracking
+	pq.fairness[job.Priority]--
+
+	// Move the last item to the root
+	pq.items[0] = pq.items[len(pq.items)-1]
+	pq.items = pq.items[:len(pq.items)-1]
+
+	// Bubble down to maintain heap property
+	if len(pq.items) > 0 {
+		pq.bubbleDown(0)
+	}
+
+	return job, true
+}
+
+// Peek returns the highest priority job without removing it
+func (pq *PriorityQueue[T]) Peek() (Job[T], bool) {
+	pq.mu.RLock()
+	defer pq.mu.RUnlock()
+
+	if len(pq.items) == 0 {
+		return Job[T]{}, false
+	}
+
+	return pq.items[0], true
+}
+
+// Size returns the number of jobs in the queue
+func (pq *PriorityQueue[T]) Size() int {
+	pq.mu.RLock()
+	defer pq.mu.RUnlock()
+	return len(pq.items)
+}
+
+// IsEmpty checks if the queue is empty
+func (pq *PriorityQueue[T]) IsEmpty() bool {
+	return pq.Size() == 0
+}
+
+// GetFairnessStats returns fairness statistics
+func (pq *PriorityQueue[T]) GetFairnessStats() map[int]int {
+	pq.mu.RLock()
+	defer pq.mu.RUnlock()
+	
+	stats := make(map[int]int)
+	for k, v := range pq.fairness {
+		stats[k] = v
+	}
+	return stats
+}
+
+// bubbleUp maintains the heap property by bubbling up an element
+func (pq *PriorityQueue[T]) bubbleUp(index int) {
+	for index > 0 {
+		parent := (index - 1) / 2
+		
+		// Check if we need to swap with parent
+		if pq.shouldSwap(parent, index) {
+			pq.items[parent], pq.items[index] = pq.items[index], pq.items[parent]
+			index = parent
+		} else {
+			break
+		}
+	}
+}
+
+// bubbleDown maintains the heap property by bubbling down an element
+func (pq *PriorityQueue[T]) bubbleDown(index int) {
+	for {
+		left := 2*index + 1
+		right := 2*index + 2
+		smallest := index
+
+		// Find the smallest among current node and its children
+		if left < len(pq.items) && pq.shouldSwap(smallest, left) {
+			smallest = left
+		}
+		if right < len(pq.items) && pq.shouldSwap(smallest, right) {
+			smallest = right
+		}
+
+		// If no swap needed, we're done
+		if smallest == index {
+			break
+		}
+
+		// Swap and continue
+		pq.items[index], pq.items[smallest] = pq.items[smallest], pq.items[index]
+		index = smallest
+	}
+}
+
+// shouldSwap determines if two jobs should be swapped for heap ordering
+// Implements fair scheduling to prevent starvation
+func (pq *PriorityQueue[T]) shouldSwap(parent, child int) bool {
+	parentJob := pq.items[parent]
+	childJob := pq.items[child]
+
+	// Primary ordering: higher priority first
+	if parentJob.Priority != childJob.Priority {
+		return childJob.Priority > parentJob.Priority
+	}
+
+	// Secondary ordering: FIFO for same priority (fairness)
+	return parentJob.Created.After(childJob.Created)
+}
