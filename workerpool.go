@@ -630,8 +630,8 @@ func max(a, b int) int {
 // WorkStealingDeque implements a lock-free work stealing deque
 // Based on the Chase-Lev work stealing deque algorithm
 type WorkStealingDeque[T any] struct {
-	bottom int32
-	top    int32
+	bottom int
+	top    int
 	buffer []Job[T]
 	mu     sync.RWMutex
 }
@@ -655,11 +655,11 @@ func (d *WorkStealingDeque[T]) Push(job Job[T]) {
 	top := d.top
 
 	// Check if we need to grow the buffer
-	if bottom-top >= int32(len(d.buffer)) {
+	if bottom-top >= len(d.buffer) {
 		d.grow()
 	}
 
-	d.buffer[bottom%int32(len(d.buffer))] = job
+	d.buffer[bottom%len(d.buffer)] = job
 	d.bottom++
 }
 
@@ -678,7 +678,7 @@ func (d *WorkStealingDeque[T]) Pop() (Job[T], bool) {
 		return Job[T]{}, false
 	}
 
-	job := d.buffer[bottom%int32(len(d.buffer))]
+	job := d.buffer[bottom%len(d.buffer)]
 	if top == bottom {
 		d.bottom = top
 	}
@@ -697,7 +697,7 @@ func (d *WorkStealingDeque[T]) Steal() (Job[T], bool) {
 		return Job[T]{}, false
 	}
 
-	job := d.buffer[top%int32(len(d.buffer))]
+	job := d.buffer[top%len(d.buffer)]
 	d.top++
 	return job, true
 }
@@ -708,7 +708,7 @@ func (d *WorkStealingDeque[T]) grow() {
 
 	// Copy existing elements
 	for i := d.top; i < d.bottom; i++ {
-		newBuffer[i%int32(len(newBuffer))] = d.buffer[i%int32(len(d.buffer))]
+		newBuffer[i%len(newBuffer)] = d.buffer[i%len(d.buffer)]
 	}
 
 	d.buffer = newBuffer
