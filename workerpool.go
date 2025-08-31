@@ -481,3 +481,104 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// WorkStealingDeque implements a lock-free work stealing deque
+// Based on the Chase-Lev work stealing deque algorithm
+type WorkStealingDeque[T any] struct {
+	bottom int32
+	top    int32
+	buffer []Job[T]
+	mu     sync.RWMutex
+}
+
+// NewWorkStealingDeque creates a new work stealing deque
+func NewWorkStealingDeque[T any](initialSize int) *WorkStealingDeque[T] {
+	if initialSize <= 0 {
+		initialSize = 64
+	}
+	return &WorkStealingDeque[T]{
+		buffer: make([]Job[T], initialSize),
+	}
+}
+
+// Push adds a job to the bottom of the deque (owner thread)
+func (d *WorkStealingDeque[T]) Push(job Job[T]) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	bottom := d.bottom
+	top := d.top
+
+	// Check if we need to grow the buffer
+	if bottom-top >= int32(len(d.buffer)) {
+		d.grow()
+	}
+
+	d.buffer[bottom%int32(len(d.buffer))] = job
+	d.bottom++
+}
+
+// Pop removes and returns a job from the bottom of the deque (owner thread)
+func (d *WorkStealingDeque[T]) Pop() (Job[T], bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	bottom := d.bottom - 1
+	d.bottom = bottom
+
+	top := d.top
+
+	if top > bottom {
+		d.bottom = top
+		return Job[T]{}, false
+	}
+
+	job := d.buffer[bottom%int32(len(d.buffer))]
+	if top == bottom {
+		d.bottom = top
+	}
+	return job, true
+}
+
+// Steal removes and returns a job from the top of the deque (thief thread)
+func (d *WorkStealingDeque[T]) Steal() (Job[T], bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	top := d.top
+	bottom := d.bottom
+
+	if top >= bottom {
+		return Job[T]{}, false
+	}
+
+	job := d.buffer[top%int32(len(d.buffer))]
+	d.top++
+	return job, true
+}
+
+// grow increases the buffer size when needed
+func (d *WorkStealingDeque[T]) grow() {
+	newBuffer := make([]Job[T], len(d.buffer)*2)
+	
+	// Copy existing elements
+	for i := d.top; i < d.bottom; i++ {
+		newBuffer[i%int32(len(newBuffer))] = d.buffer[i%int32(len(d.buffer))]
+	}
+	
+	d.buffer = newBuffer
+}
+
+// Size returns the current number of jobs in the deque
+func (d *WorkStealingDeque[T]) Size() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return int(d.bottom - d.top)
+}
+
+// IsEmpty checks if the deque is empty
+func (d *WorkStealingDeque[T]) IsEmpty() bool {
+	return d.Size() == 0
+}
+
+// PriorityQueue implements a priority queue with fair scheduling
