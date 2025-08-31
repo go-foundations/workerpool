@@ -45,8 +45,9 @@ create_milestone() {
             ;;
     esac
     
-    echo "Creating milestone: $title"
-    gh api repos/$REPO/milestones --method POST --field title="$title" --field description="$description" --field state="open" --silent
+    echo "Checking milestone: $title"
+    # Try to create milestone, but don't fail if it already exists
+    gh api repos/$REPO/milestones --method POST --field title="$title" --field description="$description" --field state="open" 2>/dev/null || echo "Milestone already exists: $title"
 }
 
 # Function to create issue
@@ -65,8 +66,7 @@ create_issue() {
         --title "$title" \
         --body "$body" \
         --label "$labels" \
-        --milestone "$MILESTONE_PREFIX $milestone" \
-        --silent
+        --milestone "$MILESTONE_PREFIX $milestone"
     
     echo "✅ Issue #$issue_num created successfully"
     echo ""

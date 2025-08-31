@@ -12,7 +12,9 @@ This directory contains scripts to automatically create GitHub issues from the d
 ### **Shell Script**
 - **File**: `create_issues.sh`
 - **Dependencies**: GitHub CLI (`gh`)
-- **Features**: Creates all issues at once (requires GitHub CLI setup)
+- **Features**: Creates milestones and issues with proper formatting
+
+**Note**: The `create_all_issues.sh` script was used to create the initial set of issues and has been removed since it's no longer needed.
 
 ## 🛠️ Setup Instructions
 
@@ -76,14 +78,14 @@ This directory contains scripts to automatically create GitHub issues from the d
 - Phase 6: Cloud Integration
 - Phase 7: Testing and Documentation
 
-### **Issues (29 total)**
-- **Phase 1**: 3 issues (Foundation)
-- **Phase 2**: 3 issues (Basic Scheduling)
-- **Phase 3**: 3 issues (Learning)
-- **Phase 4**: 3 issues (Advanced Algorithms)
-- **Phase 5**: 3 issues (Observability)
-- **Phase 6**: 3 issues (Cloud Integration)
-- **Phase 7**: 2 issues (Testing & Docs)
+### **Issues (6 created, 23 remaining)**
+- **Phase 1**: 3 issues ✅ (Foundation)
+- **Phase 2**: 3 issues ✅ (Basic Scheduling)
+- **Phase 3**: 3 issues (Learning) - Ready for creation
+- **Phase 4**: 3 issues (Advanced Algorithms) - Ready for creation
+- **Phase 5**: 3 issues (Observability) - Ready for creation
+- **Phase 6**: 3 issues (Cloud Integration) - Ready for creation
+- **Phase 7**: 2 issues (Testing & Docs) - Ready for creation
 
 ## 🏷️ Issue Labels
 
@@ -102,7 +104,7 @@ REPO_NAME = "your-username/your-repo"
 ```
 
 ### **Add More Issues**
-The Python script can be extended to create all 29 issues. Currently it creates the first 15 (Phases 1-2).
+The Python script can be extended to create the remaining 23 issues for Phases 3-7. Currently 6 issues are created (Phases 1-2).
 
 ### **Modify Issue Content**
 Edit the issue body text in the script to customize descriptions, requirements, and acceptance criteria.
@@ -135,15 +137,22 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-## 📈 Next Steps
+## 📈 Current Status & Next Steps
 
-After running the script:
+### **✅ What's Already Done:**
+- **6 issues created** for Phases 1-2 (Foundation & Basic Scheduling)
+- **7 milestones created** for all phases
+- **12 custom labels** for proper categorization
+- **Repository ready** for community development
+
+### **🔄 Next Steps:**
 
 1. **Review created issues** on GitHub
 2. **Assign issues** to team members
 3. **Set priorities** and due dates
 4. **Begin implementation** starting with Phase 1
-5. **Update progress** as issues are completed
+5. **Create remaining issues** for Phases 3-7 when ready
+6. **Update progress** as issues are completed
 
 ## 🔗 Useful Links
 
