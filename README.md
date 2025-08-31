@@ -111,29 +111,31 @@ config := workerpool.Config{
 
 **Best for**: Batch processing, when jobs are related
 
-### 3. Work Stealing
-Advanced strategy where idle workers can steal work from busy ones.
+### 3. Work Stealing 🚧 *Coming Soon*
+Advanced strategy where idle workers can steal work from busy ones using the Chase-Lev work stealing deque algorithm.
 
 ```go
 config := workerpool.Config{
     NumWorkers: 4,
-    Strategy:   workerpool.WorkStealing,
+    Strategy:   workerpool.WorkStealing, // Not yet implemented
 }
 ```
 
 **Best for**: Dynamic workloads, maximizing resource utilization
+**Status**: Research phase - implementing Chase-Lev work stealing deque
 
-### 4. Priority-Based
-Processes jobs based on priority levels.
+### 4. Priority-Based 🚧 *Coming Soon*
+Processes jobs based on priority levels with fair scheduling to prevent starvation.
 
 ```go
 config := workerpool.Config{
     NumWorkers: 4,
-    Strategy:   workerpool.PriorityBased,
+    Strategy:   workerpool.PriorityBased, // Not yet implemented
 }
 ```
 
 **Best for**: Time-sensitive operations, SLA requirements
+**Status**: Research phase - implementing priority queue with fair scheduling
 
 ## 📊 Metrics and Monitoring
 
@@ -152,6 +154,22 @@ fmt.Printf("Failed: %d\n", metrics.FailedJobs)
 fmt.Printf("Total time: %v\n", metrics.TotalDuration)
 fmt.Printf("Average time per job: %v\n", metrics.AverageDuration)
 ```
+
+## 🗺️ Roadmap
+
+### 🚧 **In Development**
+- **Work Stealing Strategy**: Implementing Chase-Lev work stealing deque for dynamic load balancing
+- **Priority-Based Strategy**: Priority queue with fair scheduling to prevent job starvation
+
+### 🔬 **Research & Design**
+- **Work Stealing**: Studying Chase-Lev algorithm variants and multi-level work stealing
+- **Priority Scheduling**: Researching fair scheduling algorithms and dynamic priority adjustment
+- **Performance Optimization**: Benchmarking against existing Go worker pool implementations
+
+### 🎯 **Future Enhancements**
+- **Adaptive Strategies**: Runtime strategy switching based on workload characteristics
+- **Distributed Work Stealing**: Cross-process work distribution
+- **Machine Learning Integration**: Predictive job scheduling based on historical patterns
 
 ## 🔄 Error Handling and Retries
 
