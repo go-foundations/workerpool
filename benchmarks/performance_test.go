@@ -24,16 +24,6 @@ func BenchmarkWorkStealing(b *testing.B) {
 }
 
 func benchmarkStrategy(b *testing.B, strategy workerpool.DistributionStrategy) {
-	config := workerpool.Config{
-		NumWorkers: 4,
-		Strategy:   strategy,
-		BufferSize: 1000,
-		Timeout:    1 * time.Minute,
-	}
-
-	pool := workerpool.NewWithConfig[string, string](config).
-		WithProcessor(benchmarkProcessor)
-
 	// Create test jobs
 	jobs := make([]workerpool.Job[string], 100)
 	for i := 0; i < 100; i++ {
@@ -44,10 +34,21 @@ func benchmarkStrategy(b *testing.B, strategy workerpool.DistributionStrategy) {
 		}
 	}
 
-	pool.AddJobs(jobs)
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		// Create a new pool instance for each iteration
+		config := workerpool.Config{
+			NumWorkers: 4,
+			Strategy:   strategy,
+			BufferSize: 1000,
+			Timeout:    1 * time.Minute,
+		}
+
+		pool := workerpool.NewWithConfig[string, string](config).
+			WithProcessor(benchmarkProcessor)
+
+		pool.AddJobs(jobs)
+
 		_, err := pool.Run()
 		if err != nil {
 			b.Fatal(err)
@@ -61,16 +62,7 @@ func BenchmarkWorkerCounts(b *testing.B) {
 
 	for _, numWorkers := range workerCounts {
 		b.Run(fmt.Sprintf("Workers_%d", numWorkers), func(b *testing.B) {
-			config := workerpool.Config{
-				NumWorkers: numWorkers,
-				Strategy:   workerpool.RoundRobin,
-				BufferSize: 1000,
-				Timeout:    1 * time.Minute,
-			}
-
-			pool := workerpool.NewWithConfig[string, string](config).
-				WithProcessor(benchmarkProcessor)
-
+			// Create test jobs
 			jobs := make([]workerpool.Job[string], 100)
 			for i := 0; i < 100; i++ {
 				jobs[i] = workerpool.Job[string]{
@@ -80,10 +72,21 @@ func BenchmarkWorkerCounts(b *testing.B) {
 				}
 			}
 
-			pool.AddJobs(jobs)
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
+				// Create a new pool instance for each iteration
+				config := workerpool.Config{
+					NumWorkers: numWorkers,
+					Strategy:   workerpool.RoundRobin,
+					BufferSize: 1000,
+					Timeout:    1 * time.Minute,
+				}
+
+				pool := workerpool.NewWithConfig[string, string](config).
+					WithProcessor(benchmarkProcessor)
+
+				pool.AddJobs(jobs)
+
 				_, err := pool.Run()
 				if err != nil {
 					b.Fatal(err)
@@ -99,16 +102,7 @@ func BenchmarkJobSizes(b *testing.B) {
 
 	for _, jobSize := range jobSizes {
 		b.Run(fmt.Sprintf("Jobs_%d", jobSize), func(b *testing.B) {
-			config := workerpool.Config{
-				NumWorkers: 4,
-				Strategy:   workerpool.RoundRobin,
-				BufferSize: jobSize,
-				Timeout:    1 * time.Minute,
-			}
-
-			pool := workerpool.NewWithConfig[string, string](config).
-				WithProcessor(benchmarkProcessor)
-
+			// Create test jobs
 			jobs := make([]workerpool.Job[string], jobSize)
 			for i := 0; i < jobSize; i++ {
 				jobs[i] = workerpool.Job[string]{
@@ -118,10 +112,21 @@ func BenchmarkJobSizes(b *testing.B) {
 				}
 			}
 
-			pool.AddJobs(jobs)
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
+				// Create a new pool instance for each iteration
+				config := workerpool.Config{
+					NumWorkers: 4,
+					Strategy:   workerpool.RoundRobin,
+					BufferSize: jobSize,
+					Timeout:    1 * time.Minute,
+				}
+
+				pool := workerpool.NewWithConfig[string, string](config).
+					WithProcessor(benchmarkProcessor)
+
+				pool.AddJobs(jobs)
+
 				_, err := pool.Run()
 				if err != nil {
 					b.Fatal(err)
@@ -143,21 +148,7 @@ func BenchmarkProcessingTimes(b *testing.B) {
 
 	for _, procTime := range processingTimes {
 		b.Run(fmt.Sprintf("ProcTime_%v", procTime), func(b *testing.B) {
-			config := workerpool.Config{
-				NumWorkers: 4,
-				Strategy:   workerpool.RoundRobin,
-				BufferSize: 100,
-				Timeout:    1 * time.Minute,
-			}
-
-			pool := workerpool.NewWithConfig[string, string](config).
-				WithProcessor(func(ctx context.Context, job workerpool.Job[string]) (string, error) {
-					if procTime > 0 {
-						time.Sleep(procTime)
-					}
-					return strings.ToUpper(job.Data), nil
-				})
-
+			// Create test jobs
 			jobs := make([]workerpool.Job[string], 100)
 			for i := 0; i < 100; i++ {
 				jobs[i] = workerpool.Job[string]{
@@ -167,10 +158,26 @@ func BenchmarkProcessingTimes(b *testing.B) {
 				}
 			}
 
-			pool.AddJobs(jobs)
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
+				// Create a new pool instance for each iteration
+				config := workerpool.Config{
+					NumWorkers: 4,
+					Strategy:   workerpool.RoundRobin,
+					BufferSize: 100,
+					Timeout:    1 * time.Minute,
+				}
+
+				pool := workerpool.NewWithConfig[string, string](config).
+					WithProcessor(func(ctx context.Context, job workerpool.Job[string]) (string, error) {
+						if procTime > 0 {
+							time.Sleep(procTime)
+						}
+						return strings.ToUpper(job.Data), nil
+					})
+
+				pool.AddJobs(jobs)
+
 				_, err := pool.Run()
 				if err != nil {
 					b.Fatal(err)
