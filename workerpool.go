@@ -47,6 +47,7 @@ const (
 	Chunked
 	WorkStealing
 	PriorityBased
+	Adaptive
 )
 
 // Strategy defines the interface for job distribution strategies
@@ -214,6 +215,8 @@ func (wp *WorkerPool[T, R]) Run() ([]Result[R], error) {
 		err = wp.runWorkStealing(ctx)
 	case PriorityBased:
 		err = wp.runPriorityBased(ctx)
+	case Adaptive:
+		err = wp.runAdaptive(ctx)
 	default:
 		err = wp.runRoundRobin(ctx)
 	}
@@ -257,6 +260,54 @@ func (wp *WorkerPool[T, R]) Run() ([]Result[R], error) {
 	wp.ctxMu.Unlock()
 
 	return results, nil
+}
+
+// runAdaptive uses the adaptive strategy to automatically select the best distribution method
+func (wp *WorkerPool[T, R]) runAdaptive(ctx context.Context) error {
+	// Analyze workload and select best strategy
+	workloadType := wp.analyzeWorkload()
+
+	// Execute the selected strategy based on workload analysis
+	switch workloadType {
+	case "priority_based":
+		return wp.runPriorityBased(ctx)
+	case "chunked":
+		return wp.runChunked(ctx)
+	case "work_stealing":
+		return wp.runWorkStealing(ctx)
+	default:
+		return wp.runRoundRobin(ctx)
+	}
+}
+
+// analyzeWorkload determines the type of workload based on job characteristics
+func (wp *WorkerPool[T, R]) analyzeWorkload() string {
+	if len(wp.jobs) == 0 {
+		return "round_robin"
+	}
+
+	// Analyze job priorities
+	highPriorityCount := 0
+	for _, job := range wp.jobs {
+		if job.Priority > 5 {
+			highPriorityCount++
+		}
+	}
+
+	// Analyze job distribution
+	jobCount := len(wp.jobs)
+	workerCount := wp.config.NumWorkers
+
+	// Determine workload type based on characteristics
+	if highPriorityCount > jobCount/2 {
+		return "priority_based"
+	} else if jobCount > workerCount*10 {
+		return "chunked"
+	} else if jobCount > workerCount*2 {
+		return "work_stealing"
+	} else {
+		return "round_robin"
+	}
 }
 
 // runRoundRobin distributes jobs evenly across workers in round-robin fashion

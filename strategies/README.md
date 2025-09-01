@@ -28,6 +28,12 @@ This package contains the distribution strategies for the worker pool. Each stra
 - Higher priority jobs are processed first
 - Good for time-sensitive workloads
 
+### 5. Adaptive (`adaptive_strategy.go`)
+- Automatically selects the best strategy based on workload characteristics
+- Analyzes job priorities, counts, and worker distribution
+- Switches between strategies for optimal performance
+- Best for mixed workloads with varying characteristics
+
 ## Common Utilities
 
 ### `common.go`
